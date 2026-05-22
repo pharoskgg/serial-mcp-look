@@ -1,0 +1,662 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>SERIAL · scope</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=IBM+Plex+Mono:wght@300;400;500;600&family=Major+Mono+Display&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css">
+<script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@xterm/addon-web-links@0.11.0/lib/addon-web-links.min.js"></script>
+<style>
+  :root{
+    --bg:#07090b; --bg-2:#0d1116; --bg-3:#131922;
+    --panel:#0a0e13; --line:#1c2530; --line-2:#2a3645;
+    --ink:#c7d3df; --ink-dim:#6b7a8c; --ink-faint:#3d4856;
+    --phos:#7dff9b; --phos-2:#58e07b;
+    --amber:#ffb454; --red:#ff5d5d; --blue:#6cc6ff; --magenta:#ff7ad9;
+    --grid: rgba(125,255,155,0.04);
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    margin:0;
+    background:
+      radial-gradient(1200px 700px at 80% -10%, rgba(125,255,155,0.06), transparent 60%),
+      radial-gradient(900px 600px at -10% 110%, rgba(255,180,84,0.04), transparent 60%),
+      linear-gradient(180deg, #06080a 0%, #04060a 100%);
+    color:var(--ink);
+    font: 400 13px/1.45 "JetBrains Mono", ui-monospace, Menlo, monospace;
+    letter-spacing: 0.01em;
+    overflow:hidden;
+    -webkit-font-smoothing:antialiased;
+  }
+  body::before{
+    content:""; position:fixed; inset:0;
+    background-image: repeating-linear-gradient(to bottom,
+      rgba(255,255,255,0.012) 0, rgba(255,255,255,0.012) 1px,
+      transparent 1px, transparent 3px);
+    pointer-events:none; z-index:99; mix-blend-mode:overlay;
+  }
+  body::after{
+    content:""; position:fixed; inset:0;
+    background-image:
+      linear-gradient(var(--grid) 1px, transparent 1px),
+      linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+    background-size: 32px 32px;
+    pointer-events:none; z-index:0;
+  }
+
+  .app{
+    position:relative; z-index:1;
+    display:grid;
+    grid-template-columns: 300px 1fr;
+    grid-template-rows: 52px 1fr 26px;
+    grid-template-areas:
+      "top  top"
+      "side main"
+      "bot  bot";
+    height:100vh;
+  }
+
+  /* TOP */
+  .top{
+    grid-area:top;
+    display:flex; align-items:center; gap:16px;
+    padding: 0 16px;
+    background: linear-gradient(180deg, #0b1015, #070a0e);
+    border-bottom: 1px solid var(--line);
+    position:relative;
+  }
+  .top::after{
+    content:""; position:absolute; left:0; right:0; bottom:-1px; height:1px;
+    background: linear-gradient(90deg, transparent, rgba(125,255,155,0.45) 20%, rgba(125,255,155,0.45) 80%, transparent);
+    opacity:.4;
+  }
+  .brand{
+    font-family:"Major Mono Display", monospace; font-size:17px;
+    letter-spacing:0.18em; color:var(--phos);
+    text-shadow:0 0 12px rgba(125,255,155,0.35);
+  }
+  .brand small{
+    font-family:"IBM Plex Mono", monospace; font-size:10px;
+    color:var(--ink-faint); letter-spacing:0.28em; margin-left:8px; font-weight:400;
+  }
+  .top .sep{ width:1px; height:22px; background:var(--line-2); }
+  .pill{
+    display:inline-flex; align-items:center; gap:8px;
+    padding:5px 11px; border:1px solid var(--line-2);
+    background:var(--bg-2); font-size:11px; letter-spacing:0.12em;
+    text-transform:uppercase; color:var(--ink-dim);
+  }
+  .pill .dot{
+    width:8px; height:8px; border-radius:50%; background:#3d4856;
+    box-shadow: inset 0 0 0 1px rgba(0,0,0,0.6);
+  }
+  .pill[data-state="open"] .dot{
+    background:var(--phos);
+    box-shadow:0 0 8px rgba(125,255,155,0.7), inset 0 0 0 1px rgba(0,0,0,0.4);
+    animation: pulse 1.6s ease-in-out infinite;
+  }
+  .pill[data-state="open"]{ color:var(--phos); border-color:rgba(125,255,155,0.4); }
+  .pill[data-state="error"] .dot{ background:var(--red); box-shadow:0 0 8px rgba(255,93,93,0.7); }
+  .pill[data-state="error"]{ color:var(--red); border-color:rgba(255,93,93,0.4); }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.5} }
+
+  .stat-grp{ display:flex; gap:14px; margin-left:auto; font-family:"IBM Plex Mono", monospace; }
+  .stat{ display:flex; flex-direction:column; align-items:flex-end; line-height:1; }
+  .stat label{
+    font-size:9px; letter-spacing:0.22em; color:var(--ink-faint);
+    text-transform:uppercase; margin-bottom:5px;
+  }
+  .stat .val{ font-size:13px; font-weight:500; color:var(--ink); font-variant-numeric:tabular-nums; }
+  .stat.rx .val{ color: var(--phos-2); }
+  .stat.tx .val{ color: var(--blue); }
+
+  /* SIDE */
+  .side{
+    grid-area:side;
+    background: linear-gradient(180deg, #080b10, #05080c);
+    border-right:1px solid var(--line);
+    padding: 14px 14px;
+    overflow-y:auto;
+    display:flex; flex-direction:column; gap:14px;
+  }
+  .side::-webkit-scrollbar{ width:6px }
+  .side::-webkit-scrollbar-thumb{ background:var(--line-2) }
+  .section-title{
+    font-family:"IBM Plex Mono", monospace; font-size:10px;
+    letter-spacing:0.28em; color:var(--ink-faint);
+    text-transform:uppercase; display:flex; align-items:center; gap:10px;
+    margin-bottom:8px;
+  }
+  .section-title::before{
+    content:""; width:8px; height:8px; background:var(--phos); opacity:.6;
+    transform:rotate(45deg); box-shadow:0 0 6px rgba(125,255,155,0.4);
+  }
+  .section-title::after{ content:""; flex:1; height:1px; background:var(--line); }
+
+  .field{ display:flex; flex-direction:column; gap:4px; margin-bottom:8px; }
+  .field label{
+    font-size:10px; letter-spacing:0.16em; text-transform:uppercase;
+    color:var(--ink-faint);
+  }
+  select, input, textarea, button{
+    font-family:"JetBrains Mono", monospace; font-size:12px;
+    color:var(--ink); background:#06090d;
+    border:1px solid var(--line-2); padding:7px 9px;
+    border-radius:0; outline:none;
+    transition: border-color .15s, background .15s, color .15s;
+  }
+  select:focus, input:focus, textarea:focus{
+    border-color:var(--phos);
+    box-shadow:0 0 0 1px rgba(125,255,155,0.15);
+  }
+  .grid-4{ display:grid; grid-template-columns:1fr 1fr; gap:6px; }
+  .btn{
+    cursor:pointer; text-transform:uppercase; letter-spacing:0.18em;
+    font-size:11px; padding:9px 11px;
+    background: linear-gradient(180deg, #0d141b, #080c11);
+    border:1px solid var(--line-2); color:var(--ink);
+    transition: all .15s; user-select:none;
+  }
+  .btn:hover{ border-color:var(--phos); color:var(--phos); }
+  .btn.primary{
+    border-color:rgba(125,255,155,0.5); color:var(--phos);
+    background: linear-gradient(180deg, rgba(125,255,155,0.08), rgba(125,255,155,0.02));
+  }
+  .btn.primary:hover{
+    background: linear-gradient(180deg, rgba(125,255,155,0.16), rgba(125,255,155,0.04));
+    box-shadow:0 0 14px rgba(125,255,155,0.18);
+  }
+  .btn.danger{ border-color:rgba(255,93,93,0.4); color:var(--red); }
+  .btn.danger:hover{ background:rgba(255,93,93,0.06); box-shadow:0 0 12px rgba(255,93,93,0.15); }
+  .btn[disabled]{ opacity:.35; pointer-events:none; }
+  .btn-row{ display:flex; gap:6px; }
+  .btn-row .btn{ flex:1; }
+
+  .port-row{ display:flex; gap:6px; align-items:flex-end; }
+  .port-row select{ flex:1; }
+  .icon-btn{
+    width:32px; height:32px; display:grid; place-items:center;
+    background:#06090d; border:1px solid var(--line-2); cursor:pointer;
+    color:var(--ink-dim); transition: all .15s;
+  }
+  .icon-btn:hover{ color:var(--phos); border-color:var(--phos); }
+  .icon-btn svg{ width:14px; height:14px; }
+
+  .toggle-row{
+    display:flex; align-items:center; gap:8px; font-size:10px;
+    color:var(--ink-faint); letter-spacing:0.16em; text-transform:uppercase;
+    cursor:pointer; user-select:none;
+  }
+  .toggle-row input{ width:auto; padding:0; margin:0; cursor:pointer; }
+
+  /* MAIN: terminal-first layout */
+  .main{
+    grid-area:main;
+    display:grid;
+    grid-template-rows: 30px 1fr auto;
+    background: #04060a;
+    overflow:hidden;
+    position:relative;
+  }
+  .term-header{
+    display:flex; align-items:center; gap:12px;
+    padding: 0 14px;
+    border-bottom:1px solid var(--line);
+    background:#070a0f;
+    font-family:"IBM Plex Mono", monospace;
+    font-size:10px; letter-spacing:0.22em;
+    color:var(--ink-faint); text-transform:uppercase;
+  }
+  .term-header .label{ color:var(--phos); }
+  .term-header .pos{ margin-left:auto; font-variant-numeric:tabular-nums; }
+  .term-header .actions{ display:flex; gap:8px; }
+  .term-header .mini{
+    background:#06090d; border:1px solid var(--line-2);
+    color:var(--ink-dim); font-size:10px; letter-spacing:0.14em;
+    padding:3px 8px; cursor:pointer; text-transform:uppercase;
+  }
+  .term-header .mini:hover{ color:var(--phos); border-color:var(--phos); }
+  .term-header .mini.active{ color:var(--phos); border-color:rgba(125,255,155,0.4); background:rgba(125,255,155,0.06); }
+
+  .term-wrap{
+    position:relative; overflow:hidden;
+    padding: 8px 12px 4px;
+    background: #04060a;
+  }
+  .term-wrap.disabled::after{
+    content:"未连接 — 打开端口后开始交互";
+    position:absolute; inset:0;
+    display:flex; align-items:center; justify-content:center;
+    color:var(--ink-faint); letter-spacing:0.3em; font-size:11px;
+    text-transform:uppercase;
+    background: rgba(4,6,10,0.75);
+    pointer-events:none;
+  }
+  #term{ width:100%; height:100%; }
+  .xterm .xterm-viewport::-webkit-scrollbar{ width:8px; }
+  .xterm .xterm-viewport::-webkit-scrollbar-thumb{ background:var(--line-2); }
+
+  /* Inspector (bottom collapsible) */
+  .inspector{
+    border-top:1px solid var(--line);
+    background:#06090d;
+    max-height:240px;
+    overflow-y:auto;
+    display:none;
+  }
+  .inspector.open{ display:block; }
+  .inspector::-webkit-scrollbar{ width:6px; }
+  .inspector::-webkit-scrollbar-thumb{ background:var(--line-2); }
+  .frame{
+    display:grid; grid-template-columns: 90px 32px 1fr 48px;
+    gap:10px; padding:4px 14px; border-bottom:1px dashed rgba(28,37,48,0.5);
+    font-size:11px; align-items:start;
+  }
+  .frame .ts{ color:var(--ink-faint); font-variant-numeric:tabular-nums; }
+  .frame .dir{
+    font-size:9px; letter-spacing:0.16em; font-weight:600;
+    text-align:center; padding:1px 0; border:1px solid currentColor;
+    height:16px; line-height:13px;
+  }
+  .frame.rx .dir{ color:var(--phos); }
+  .frame.tx .dir{ color:var(--blue); }
+  .frame.sys .dir{ color:var(--amber); }
+  .frame.tool .dir{ color:var(--magenta); }
+  .frame .hex{
+    color:var(--ink-dim); font-size:10px; letter-spacing:0.04em;
+    white-space:pre-wrap; word-break:break-all;
+  }
+  .frame.sys .hex, .frame.tool .hex{ color:inherit; font-style:italic; }
+  .frame.sys{ color:var(--amber); }
+  .frame.tool{ color:var(--magenta); }
+  .frame .bytes{
+    text-align:right; color:var(--ink-faint); font-size:10px;
+    font-variant-numeric:tabular-nums;
+  }
+
+  /* BOTTOM */
+  .bot{
+    grid-area:bot;
+    border-top:1px solid var(--line);
+    background:#04070a;
+    display:flex; align-items:center;
+    padding: 0 14px; gap:14px;
+    font-family:"IBM Plex Mono", monospace; font-size:10px;
+    letter-spacing:0.18em; color:var(--ink-faint); text-transform:uppercase;
+  }
+  .bot .blink{
+    width:6px; height:6px; background:var(--phos);
+    box-shadow:0 0 6px rgba(125,255,155,0.7);
+    animation: blink 1.2s steps(2) infinite;
+  }
+  @keyframes blink { 50% { opacity:0; } }
+  .bot .tool-call{ color:var(--magenta); }
+  .bot .ws{ margin-left:auto; }
+  .bot .ws.up{ color:var(--phos); }
+  .bot .ws.down{ color:var(--red); }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- TOP -->
+  <header class="top">
+    <div class="brand">serial<small>// scope · v0.2</small></div>
+    <div class="sep"></div>
+    <div class="pill" id="statePill" data-state="closed">
+      <span class="dot"></span><span id="stateText">disconnected</span>
+    </div>
+    <div class="pill" id="portPill" style="display:none">
+      <span id="portText"></span>
+    </div>
+
+    <div class="stat-grp">
+      <div class="stat rx"><label>rx</label><div class="val" id="rxBytes">0</div></div>
+      <div class="stat tx"><label>tx</label><div class="val" id="txBytes">0</div></div>
+    </div>
+  </header>
+
+  <!-- SIDE -->
+  <aside class="side">
+
+    <div>
+      <div class="section-title">port</div>
+      <div class="field">
+        <label>device</label>
+        <div class="port-row">
+          <select id="portSel"><option>—</option></select>
+          <button class="icon-btn" id="refreshBtn" title="refresh">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="23 4 23 10 17 10"></polyline>
+              <polyline points="1 20 1 14 7 14"></polyline>
+              <path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"></path>
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <div class="grid-4">
+        <div class="field"><label>baud</label>
+          <select id="baud">
+            <option>9600</option><option>19200</option><option>38400</option>
+            <option>57600</option><option selected>115200</option>
+            <option>230400</option><option>460800</option><option>921600</option>
+          </select>
+        </div>
+        <div class="field"><label>parity</label>
+          <select id="parity">
+            <option value="none">none</option><option value="even">even</option>
+            <option value="odd">odd</option><option value="mark">mark</option>
+            <option value="space">space</option>
+          </select>
+        </div>
+        <div class="field"><label>data</label>
+          <select id="dataBits"><option>8</option><option>7</option><option>6</option><option>5</option></select>
+        </div>
+        <div class="field"><label>stop</label>
+          <select id="stopBits"><option>1</option><option>1.5</option><option>2</option></select>
+        </div>
+      </div>
+
+      <div class="btn-row" style="margin-top:6px">
+        <button class="btn primary" id="openBtn">open</button>
+        <button class="btn danger" id="closeBtn" disabled>close</button>
+      </div>
+    </div>
+
+    <div>
+      <div class="section-title">terminal</div>
+      <label class="toggle-row" style="margin-bottom:6px">
+        <input type="checkbox" id="localEcho">
+        <span>local echo</span>
+      </label>
+      <label class="toggle-row" style="margin-bottom:6px">
+        <input type="checkbox" id="crlf">
+        <span>send CR+LF on enter</span>
+      </label>
+      <div class="btn-row">
+        <button class="btn" id="clearBtn">clear</button>
+        <button class="btn" id="toggleInspector">inspector</button>
+      </div>
+    </div>
+
+    <div>
+      <div class="section-title">quick send</div>
+      <div class="btn-row" style="margin-bottom:6px">
+        <button class="btn" data-hex="03">ctrl-c</button>
+        <button class="btn" data-hex="04">ctrl-d</button>
+        <button class="btn" data-hex="1B">esc</button>
+      </div>
+      <div class="btn-row">
+        <button class="btn" data-hex="1B 5B 41">↑</button>
+        <button class="btn" data-hex="1B 5B 42">↓</button>
+        <button class="btn" data-hex="09">tab</button>
+      </div>
+    </div>
+
+  </aside>
+
+  <!-- MAIN -->
+  <main class="main">
+    <div class="term-header">
+      <span class="label">▸ tty</span>
+      <span id="termTitle">no session</span>
+      <span class="pos" id="cursorPos">—</span>
+      <div class="actions">
+        <button class="mini" id="copyBtn" title="copy selection">copy</button>
+      </div>
+    </div>
+    <div class="term-wrap disabled" id="termWrap">
+      <div id="term"></div>
+    </div>
+    <div class="inspector" id="inspector"></div>
+  </main>
+
+  <!-- BOTTOM -->
+  <footer class="bot">
+    <span class="blink"></span>
+    <span>system online</span>
+    <span class="tool-call" id="toolCall">idle</span>
+    <span class="ws down" id="wsState">○ ws offline</span>
+  </footer>
+
+</div>
+
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+
+  // ── xterm setup ──
+  const term = new Terminal({
+    cursorBlink: true,
+    cursorStyle: "bar",
+    fontFamily: '"JetBrains Mono", "IBM Plex Mono", ui-monospace, monospace',
+    fontSize: 13,
+    lineHeight: 1.15,
+    letterSpacing: 0.5,
+    scrollback: 5000,
+    convertEol: false,
+    allowProposedApi: true,
+    theme: {
+      background:        "#04060a",
+      foreground:        "#c7d3df",
+      cursor:            "#7dff9b",
+      cursorAccent:      "#04060a",
+      selectionBackground:"rgba(125,255,155,0.25)",
+      black:   "#0a0e13", red:     "#ff5d5d", green:   "#7dff9b",
+      yellow:  "#ffb454", blue:    "#6cc6ff", magenta: "#ff7ad9",
+      cyan:    "#5feaff", white:   "#c7d3df",
+      brightBlack:   "#3d4856", brightRed:     "#ff8b8b",
+      brightGreen:   "#a8ffbe", brightYellow:  "#ffd089",
+      brightBlue:    "#9bd9ff", brightMagenta: "#ffa3e2",
+      brightCyan:    "#9bf4ff", brightWhite:   "#e3edf6",
+    },
+  });
+  const fit = new FitAddon.FitAddon();
+  term.loadAddon(fit);
+  if (window.WebLinksAddon) term.loadAddon(new WebLinksAddon.WebLinksAddon());
+  term.open($("term"));
+  setTimeout(()=>fit.fit(), 50);
+  window.addEventListener("resize", () => fit.fit());
+
+  term.onCursorMove(() => {
+    const p = term.buffer.active;
+    $("cursorPos").textContent = `${p.cursorY + 1}:${p.cursorX + 1}  ${term.cols}×${term.rows}`;
+  });
+
+  // ── state ──
+  let ws = null;
+  let reqId = 0;
+  let isOpen = false;
+  let localEcho = false;
+  let crlf = false;
+  let inspectorOpen = false;
+  const inspectorEl = $("inspector");
+
+  // ── send helpers ──
+  function send(obj){
+    if (!ws || ws.readyState !== 1) return;
+    obj.id = ++reqId;
+    ws.send(JSON.stringify(obj));
+  }
+  function writeUtf8(s){
+    if (!isOpen) return;
+    if (localEcho) term.write(s.replace(/\r/g, "\r\n"));
+    send({op:"write", data: s, encoding:"utf8"});
+  }
+  function writeHex(hex){
+    if (!isOpen) return;
+    send({op:"write", data: hex, encoding:"hex"});
+  }
+
+  // ── xterm input ──
+  term.onData((data) => {
+    // map: if CRLF toggle is on and user pressed Enter (\r), send \r\n
+    if (crlf && data === "\r") writeUtf8("\r\n");
+    else writeUtf8(data);
+  });
+
+  // ── ws ──
+  function connectWs(){
+    const proto = location.protocol === "https:" ? "wss" : "ws";
+    ws = new WebSocket(`${proto}://${location.host}/ws`);
+    ws.onopen = () => {
+      $("wsState").className = "ws up";
+      $("wsState").textContent = "● ws online";
+      send({op:"refresh"});
+      send({op:"status"});
+    };
+    ws.onclose = () => {
+      $("wsState").className = "ws down";
+      $("wsState").textContent = "○ ws offline";
+      setTimeout(connectWs, 1200);
+    };
+    ws.onmessage = (e) => {
+      let m; try { m = JSON.parse(e.data); } catch { return; }
+      handle(m);
+    };
+  }
+
+  // ── b64 -> Uint8Array ──
+  function b64ToBytes(s){
+    const bin = atob(s);
+    const a = new Uint8Array(bin.length);
+    for (let i=0;i<bin.length;i++) a[i] = bin.charCodeAt(i);
+    return a;
+  }
+
+  function handle(m){
+    if (m.type === "ports") fillPorts(m.ports);
+    else if (m.type === "status") applyStatus(m.status);
+    else if (m.type === "frame") onFrame(m.frame);
+    else if (m.type === "tool-call"){
+      $("toolCall").textContent = `▸ ${m.name}${m.summary ? " · " + m.summary : ""}`;
+      pushInspector({ ts:m.ts, dir:"tool", utf8:`MCP » ${m.name}${m.summary ? " " + m.summary : ""}`, hex:"", bytes:0 });
+    }
+    else if (m.type === "ack" && m.error){
+      pushInspector({ ts:Date.now(), dir:"sys", utf8:`✕ ${m.error}`, hex:"", bytes:0 });
+    }
+  }
+
+  function onFrame(f){
+    if (f.dir === "rx"){
+      // write raw bytes to terminal — preserves ANSI escapes, colors, cursor moves
+      term.write(b64ToBytes(f.b64));
+    }
+    pushInspector(f);
+  }
+
+  function pushInspector(f){
+    if (!inspectorOpen) return;
+    const el = document.createElement("div");
+    el.className = `frame ${f.dir}`;
+    el.innerHTML = `
+      <div class="ts">${fmtTs(f.ts)}</div>
+      <div class="dir">${(f.dir==="tool"?"MCP":f.dir==="sys"?"SYS":f.dir.toUpperCase())}</div>
+      <div class="hex">${escapeHtml(f.dir==="tool"||f.dir==="sys" ? f.utf8 : (f.hex||""))}</div>
+      <div class="bytes">${f.bytes||"—"}</div>
+    `;
+    inspectorEl.appendChild(el);
+    while (inspectorEl.children.length > 500) inspectorEl.removeChild(inspectorEl.firstChild);
+    inspectorEl.scrollTop = inspectorEl.scrollHeight;
+  }
+
+  function fillPorts(ports){
+    const sel = $("portSel");
+    const cur = sel.value;
+    sel.innerHTML = "";
+    if (!ports.length){
+      sel.innerHTML = `<option value="">no ports found</option>`;
+      return;
+    }
+    for (const p of ports){
+      const o = document.createElement("option");
+      o.value = p.path;
+      o.textContent = `${p.path}${p.manufacturer ? "  ·  " + p.manufacturer : ""}`;
+      sel.appendChild(o);
+    }
+    if ([...sel.options].some(o=>o.value===cur)) sel.value = cur;
+  }
+
+  function applyStatus(s){
+    isOpen = !!s.isOpen;
+    const pill = $("statePill");
+    if (s.lastError){ pill.dataset.state = "error"; $("stateText").textContent = "error"; }
+    else if (s.isOpen){ pill.dataset.state = "open"; $("stateText").textContent = "connected"; }
+    else { pill.dataset.state = "closed"; $("stateText").textContent = "disconnected"; }
+    if (s.isOpen && s.path && s.options){
+      $("portPill").style.display = "";
+      $("portText").textContent = `${s.path} · ${s.options.baudRate}-${s.options.dataBits}${(s.options.parity||"n")[0].toUpperCase()}${s.options.stopBits}`;
+      $("termTitle").textContent = `${s.path} @ ${s.options.baudRate}`;
+      $("termWrap").classList.remove("disabled");
+      term.focus();
+    } else {
+      $("portPill").style.display = "none";
+      $("termTitle").textContent = "no session";
+      $("termWrap").classList.add("disabled");
+    }
+    $("openBtn").disabled = s.isOpen;
+    $("closeBtn").disabled = !s.isOpen;
+    $("rxBytes").textContent = fmtBytes(s.rxBytes);
+    $("txBytes").textContent = fmtBytes(s.txBytes);
+    setTimeout(()=>fit.fit(), 30);
+  }
+
+  function fmtBytes(n){
+    if (n < 1024) return String(n);
+    if (n < 1024*1024) return (n/1024).toFixed(1) + "K";
+    return (n/1024/1024).toFixed(2) + "M";
+  }
+  function pad(n,w){ return String(n).padStart(w,"0"); }
+  function fmtTs(ts){
+    const d = new Date(ts);
+    return `${pad(d.getHours(),2)}:${pad(d.getMinutes(),2)}:${pad(d.getSeconds(),2)}.${pad(d.getMilliseconds(),3)}`;
+  }
+  function escapeHtml(s){
+    return String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+  }
+
+  // ── controls ──
+  $("refreshBtn").onclick = () => send({op:"refresh"});
+  $("openBtn").onclick = () => {
+    const path = $("portSel").value;
+    if (!path) return;
+    send({
+      op:"open", path,
+      baudRate: parseInt($("baud").value,10),
+      dataBits: parseInt($("dataBits").value,10),
+      stopBits: parseFloat($("stopBits").value),
+      parity: $("parity").value
+    });
+  };
+  $("closeBtn").onclick = () => send({op:"close"});
+  $("clearBtn").onclick = () => term.clear();
+  $("toggleInspector").onclick = (e) => {
+    inspectorOpen = !inspectorOpen;
+    inspectorEl.classList.toggle("open", inspectorOpen);
+    e.target.classList.toggle("active", inspectorOpen);
+    setTimeout(()=>fit.fit(), 30);
+  };
+  $("localEcho").onchange = (e) => { localEcho = e.target.checked; };
+  $("crlf").onchange = (e) => { crlf = e.target.checked; };
+
+  $("copyBtn").onclick = () => {
+    const sel = term.getSelection();
+    if (sel) navigator.clipboard.writeText(sel).catch(()=>{});
+  };
+
+  document.querySelectorAll("[data-hex]").forEach(b => {
+    b.onclick = () => writeHex(b.dataset.hex);
+  });
+
+  connectWs();
+})();
+</script>
+</body>
+</html>
