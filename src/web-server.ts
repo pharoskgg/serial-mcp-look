@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import express from "express";
 import { WebSocketServer, WebSocket } from "ws";
 import { serial, type Frame, type Status } from "./serial-manager.js";
+import { shell, type SessionInfo } from "./shell-manager.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -33,6 +34,16 @@ export async function startWebServer(port: number): Promise<{ url: string }> {
     broadcast({ type: "tool-call", ...e })
   );
 
+  shell.on("shell-data", (sessionName: string, f: Frame) =>
+    broadcast({ type: "shell-frame", session: sessionName, frame: f })
+  );
+  shell.on("shell-state", (sessions: SessionInfo[]) =>
+    broadcast({ type: "shell-list", sessions })
+  );
+  shell.on("tool-call", (e: { ts: number; name: string; summary: string }) =>
+    broadcast({ type: "tool-call", ...e })
+  );
+
   wss.on("connection", async (ws) => {
     // initial sync
     try {
@@ -42,6 +53,7 @@ export async function startWebServer(port: number): Promise<{ url: string }> {
       ws.send(JSON.stringify({ type: "ports", ports: [] }));
     }
     ws.send(JSON.stringify({ type: "status", status: serial.status() }));
+    ws.send(JSON.stringify({ type: "shell-list", sessions: shell.list() }));
 
     ws.on("message", async (raw) => {
       let msg: any;
@@ -84,6 +96,35 @@ export async function startWebServer(port: number): Promise<{ url: string }> {
           }
           case "write": {
             await serial.write(String(msg.data ?? ""), msg.encoding === "hex" ? "hex" : "utf8");
+            reply();
+            break;
+          }
+          case "shell-start": {
+            const info = await shell.start(
+              msg.name ?? "shell-1",
+              msg.shell || undefined,
+              msg.cols ?? 80,
+              msg.rows ?? 24
+            );
+            reply({ info });
+            break;
+          }
+          case "shell-write": {
+            await shell.write(
+              String(msg.name ?? ""),
+              String(msg.data ?? ""),
+              msg.encoding === "hex" ? "hex" : "utf8"
+            );
+            reply();
+            break;
+          }
+          case "shell-kill": {
+            await shell.kill(String(msg.name ?? ""));
+            reply();
+            break;
+          }
+          case "shell-list": {
+            ws.send(JSON.stringify({ type: "shell-list", sessions: shell.list() }));
             reply();
             break;
           }

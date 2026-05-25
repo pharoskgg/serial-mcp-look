@@ -1,6 +1,7 @@
 import { startMcp } from "./mcp-server.js";
 import { startWebServer } from "./web-server.js";
 import { serial } from "./serial-manager.js";
+import { shell } from "./shell-manager.js";
 
 // CRITICAL: MCP stdio uses stdout for protocol. All logging MUST go to stderr.
 function log(...args: unknown[]) {
@@ -21,9 +22,10 @@ async function main() {
 }
 
 async function shutdown(signal: string) {
-  log(`received ${signal}, closing serial port…`);
+  log(`received ${signal}, closing serial port and shell sessions…`);
   try {
     await serial.close();
+    await shell.killAll();
   } catch (e) {
     log("error closing port:", e);
   }

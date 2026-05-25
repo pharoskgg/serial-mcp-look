@@ -2,7 +2,7 @@
 
 > 让 Claude Code 直接操作串口，并在浏览器里像 MobaXterm 一样**实时围观**这台终端。
 
-一个 Node.js 实现的 MCP（Model Context Protocol）服务器，把本机串口暴露给 Claude，同时内置一个 xterm.js 全功能终端 UI 让你旁观/接管会话。
+一个 Node.js 实现的 MCP（Model Context Protocol）服务器，把本机串口和 shell 终端暴露给 Claude，同时内置一个 xterm.js 全功能终端 UI 让你旁观/接管会话。
 
 ---
 
@@ -21,16 +21,16 @@
    │   mcp    │   WebSocket          ┌─────►  浏览器 xterm.js    │
    │ process  ◄──────────────────────┘      │  http://127.0.0.1: │
    │          │                             │       3737         │
-   └────┬─────┘                             └─────────────────────┘
-        │ node-serialport
-        ▼
-   ┌──────────┐
-   │  COM1 /  │
-   │ ttyUSB0  │
-   └──────────┘
+   └──┬───┬───┘                             └─────────────────────┘
+      │   │ node-serialport / node-pty
+      ▼   ▼
+ ┌────────┐  ┌──────────┐
+ │ COM1 / │  │  Shell   │
+ │ttyUSB0 │  │ PTY 会话  │
+ └────────┘  └──────────┘
 ```
 
-**核心设计**：MCP 与 Web UI 共享同一个 `SerialManager` 单例。Claude 调工具、你在浏览器按键、Claude 调工具、你又按键……都走同一根串口，UI 上看到的就是真实的合并视图。
+**核心设计**：MCP 与 Web UI 共享 `SerialManager` 和 `ShellManager` 两个单例。Claude 调工具、你在浏览器按键……都走同一根串口或同一个 PTY，UI 上看到的就是真实的合并视图。
 
 ---
 
@@ -39,19 +39,23 @@
 | 组件 | 职责 | 文件 |
 |---|---|---|
 | **SerialManager** | 串口打开/关闭/读写的单例 + EventEmitter，所有共享状态在这里 | `src/serial-manager.ts` |
-| **MCP Server** | 注册 6 个工具，通过 stdio 跟 Claude 通信 | `src/mcp-server.ts` |
+| **ShellManager** | PTY 会话管理单例 + EventEmitter，支持多 shell 并行 | `src/shell-manager.ts` |
+| **MCP Server** | 注册 10 个工具（6 串口 + 4 shell），通过 stdio 跟 Claude 通信 | `src/mcp-server.ts` |
 | **Web Server** | Express 静态托管 UI + WebSocket 双向桥接 | `src/web-server.ts` |
-| **Web UI** | 单页 HTML，内嵌 xterm.js 终端 | `src/public/index.html` |
-| **入口** | 并行启动 MCP stdio 与 Web 服务 | `src/index.ts` |
+| **Web UI** | 单页 HTML，内嵌 xterm.js 终端，Tab 切换串口/Shell | `src/public/index.html` |
+| **入口** | 并行启动 MCP stdio 与 Web 服务，处理优雅关闭 | `src/index.ts` |
 
 事件流：
 - 串口 RX 数据 → `SerialManager` emit `frame` (含 utf8/hex/base64) → WebSocket 广播 → xterm 写入原始字节（保留 ANSI 转义、颜色、光标控制）
-- Claude 调用工具 → `SerialManager` 写串口 + emit `tool-call` → UI 底栏闪显 `▸ tool_name`
-- 浏览器按键 → xterm `onData` → WebSocket → `SerialManager` 写串口
+- PTY 输出数据 → `ShellManager` emit `shell-data` (含 session + Frame) → WebSocket 广播 → 对应 shell tab 的 xterm 写入
+- Claude 调用工具 → Manager 写串口/PTY + emit `tool-call` → UI 底栏闪显 `▸ tool_name`
+- 浏览器按键 → xterm `onData` → WebSocket → Manager 写串口/PTY
 
 ---
 
 ## 📋 提供的 MCP 工具
+
+### 串口
 
 | 工具 | 入参 | 输出（可读文本） |
 |---|---|---|
@@ -61,6 +65,17 @@
 | `write_data` | `data` *(必填)*, `encoding` (`utf8` 或 `hex`，默认 utf8) | `→ 已发送 N 字节` + 预览 |
 | `read_buffer` | `maxBytes` (默认 1024), `clear` (默认 true) | `← 接收 N 字节` + 分隔线包裹的纯文本输出 + hex 预览 |
 | `get_status` | — | `● 当前状态` 块 |
+
+### Shell 终端
+
+| 工具 | 入参 | 输出（可读文本） |
+|---|---|---|
+| `shell_start` | `name` (默认 shell-1), `shell` (自动检测), `cols` (默认 80), `rows` (默认 24) | `✓ 已启动 shell 会话` + PID/尺寸 |
+| `shell_write` | `name` *(必填)*, `data` *(必填)*, `encoding` (`utf8` 或 `hex`，默认 utf8) | `→ 已发送 N 字节到 会话名` |
+| `shell_read` | `name` *(必填)*, `maxBytes` (默认 4096), `clear` (默认 true) | `← 会话名 接收 N 字节` + 分隔线包裹的输出 + hex 预览 |
+| `shell_kill` | `name` *(必填)* | `○ 已结束 shell 会话` |
+
+Windows 上 shell 自动检测顺序：wsl.exe → pwsh.exe → powershell.exe → cmd.exe
 
 输出统一为人类可读的多行文本（不是 JSON 大堆）。`read_buffer` 会把 `\r\n` 规整成 `\n` 方便 Claude 解析终端输出。
 
@@ -96,7 +111,7 @@ claude mcp list
 # 应该看到：serial-mcp: node …\dist\index.js - ✓ Connected
 ```
 
-完全退出 Claude Code（`/exit` 让 `claude` 进程退出），重新启动后 `/mcp` 即可看到 `serial-mcp` 及其 6 个工具。
+完全退出 Claude Code（`/exit` 让 `claude` 进程退出），重新启动后 `/mcp` 即可看到 `serial-mcp` 及其 10 个工具。
 
 > **注意**：Claude Code 仅在启动时读取 MCP 配置。光在交互里 `/clear` 不会重新加载 MCP，必须让 `claude` 进程整体退出。
 
@@ -143,29 +158,33 @@ claude mcp add --scope user --env SERIAL_MCP_UI_PORT=8080 serial-mcp -- node "$(
 
 ### UI 功能
 
+- **Tab 栏** — 顶部切换串口终端 (`▸ tty`) 和 Shell 终端 (`▸ sh:会话名`)，`+` 按钮新建 shell 会话
 - **主区域** — xterm.js 全功能终端
   - 完整 ANSI 颜色、光标控制、滚屏
-  - 点击进入后键盘直接发送到串口
+  - 点击进入后键盘直接发送到串口/Shell
   - 支持复制（选中即可，或点 `copy` 按钮）
 - **左侧端口面板** — 选择 COM 口、波特率/数据位/停止位/校验位、Open/Close
+- **左侧 Shell 面板** — session 选择器、start/kill 按钮、shell 类型选择 (auto/wsl/cmd/powershell)
 - **左侧 Terminal 面板**
   - `local echo` — 本地回显（设备无回显时打开）
   - `send CR+LF on enter` — 部分老设备需要 CRLF
   - `clear` — 清屏（不影响串口）
   - `inspector` — 底部展开 hex 检视器，看每帧的时间戳/方向/hex
-- **左侧 Quick Send** — Ctrl-C / Ctrl-D / ESC / ↑ ↓ / Tab 等热键
+- **左侧 Quick Send** — Ctrl-C / Ctrl-D / ESC / ↑ ↓ / Tab 等热键（自动路由到当前活跃 tab）
 - **顶栏** — 连接状态 LED、当前端口@波特率、RX/TX 字节计数（K/M 自动换算）
 - **底栏** — 最近一次 MCP 工具调用（橙紫色 `▸ tool_name`，让你一眼看到 Claude 触发了什么）
+- **Inspector** — shell 帧以青色(cyan)标记，与串口 RX(绿)/TX(蓝) 区分
 
 ---
 
 ## 🤝 协作模式
 
-UI 和 Claude **完全对等**——同一根串口、同一份缓冲区。常见姿势：
+UI 和 Claude **完全对等**——同一根串口、同一个 PTY、同一份缓冲区。常见姿势：
 
 1. **Claude 主探，你旁观**：让 Claude 跑一连串命令探索设备，你在浏览器里看实时输出，必要时直接键盘介入纠偏
-2. **你手探，Claude 解读**：你在浏览器里敲完一段命令，让 Claude `read_buffer` 后帮你分析输出
-3. **Claude 写脚本你验证**：Claude 用 `write_data` 发批量指令，你在 UI 里看反馈是否符合预期
+2. **你手探，Claude 解读**：你在浏览器里敲完一段命令，让 Claude `read_buffer` / `shell_read` 后帮你分析输出
+3. **Claude 写脚本你验证**：Claude 用 `write_data` / `shell_write` 发批量指令，你在 UI 里看反馈是否符合预期
+4. **Shell 协作**：Claude 在 WSL 里跑编译/部署命令，你在浏览器 Tab 里实时看进度
 
 ---
 
@@ -200,10 +219,11 @@ serial-mcp/
 ├── tsconfig.json
 ├── README.md                ← 你正在看
 ├── src/
-│   ├── index.ts             # 入口：并行启 MCP + Web，处理 SIGINT 优雅关串口
-│   ├── serial-manager.ts    # 核心单例：串口生命周期 + 事件总线
-│   ├── mcp-server.ts        # 6 个工具的 schema + handler
-│   ├── web-server.ts        # Express + WebSocket，订阅 SerialManager 事件
+│   ├── index.ts             # 入口：并行启 MCP + Web，处理优雅关闭
+│   ├── serial-manager.ts    # 串口核心单例：生命周期 + 事件总线
+│   ├── shell-manager.ts     # Shell 终端单例：多 PTY 会话管理
+│   ├── mcp-server.ts        # 10 个工具的 schema + handler
+│   ├── web-server.ts        # Express + WebSocket，订阅两个 Manager 事件
 │   └── public/
 │       └── index.html       # 完整 UI（xterm.js + 所有 CSS/JS 内联）
 └── dist/                    # tsc 输出，git 不跟踪
@@ -215,6 +235,7 @@ serial-mcp/
 
 - **MCP**: [`@modelcontextprotocol/sdk`](https://github.com/modelcontextprotocol/typescript-sdk) ^1.0
 - **串口**: [`serialport`](https://serialport.io/) ^12（自带 Win/macOS/Linux 预编译二进制）
+- **PTY**: [`node-pty`](https://github.com/microsoft/node-pty) ^1.1（true PTY，完整 ANSI 支持）
 - **HTTP/WS**: [`express`](https://expressjs.com/) ^4 + [`ws`](https://github.com/websockets/ws) ^8
 - **终端**: [`@xterm/xterm`](https://xtermjs.org/) 5.5 + `addon-fit` + `addon-web-links`（CDN 引入）
 - **语言**: TypeScript 5

@@ -5,6 +5,7 @@ import {
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { serial } from "./serial-manager.js";
+import { shell } from "./shell-manager.js";
 
 const TOOLS = [
   {
@@ -68,6 +69,63 @@ const TOOLS = [
     name: "get_status",
     description: "Return current connection status, port options, and byte counters.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
+  },
+  {
+    name: "shell_start",
+    description:
+      "Start a local shell session (PTY). On Windows, defaults to cmd.exe.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        name: { type: "string", description: "Session name (default: shell-1)" },
+        shell: { type: "string", description: "Shell executable e.g. wsl.exe, cmd.exe, powershell" },
+        cols: { type: "number", description: "Terminal columns (default: 80)" },
+        rows: { type: "number", description: "Terminal rows (default: 24)" },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "shell_write",
+    description:
+      "Write data to a running shell session's stdin. encoding='utf8' sends the string as-is; 'hex' parses hex pairs.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        name: { type: "string", description: "Session name" },
+        data: { type: "string" },
+        encoding: { type: "string", enum: ["utf8", "hex"], default: "utf8" },
+      },
+      required: ["name", "data"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "shell_read",
+    description:
+      "Read recent output from a shell session. If clear=true (default), the buffer is emptied after reading.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        name: { type: "string", description: "Session name" },
+        maxBytes: { type: "number", default: 4096 },
+        clear: { type: "boolean", default: true },
+      },
+      required: ["name"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "shell_kill",
+    description: "Kill a running shell session.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        name: { type: "string", description: "Session name" },
+      },
+      required: ["name"],
+      additionalProperties: false,
+    },
   },
 ] as const;
 
@@ -203,6 +261,55 @@ export function createMcpServer() {
           serial.announceToolCall(name, "");
           const s = serial.status();
           return text(fmtStatus(s, "● 当前状态"));
+        }
+        case "shell_start": {
+          const sessionName = String(args.name ?? "shell-1");
+          const shellPath = args.shell ? String(args.shell) : undefined;
+          const cols = (args.cols as number | undefined) ?? 80;
+          const rows = (args.rows as number | undefined) ?? 24;
+          shell.announceToolCall(name, `${sessionName} ${shellPath ?? "auto"}`);
+          const info = await shell.start(sessionName, shellPath, cols, rows);
+          return text(
+            `✓ 已启动 shell 会话\n  ● ${info.name}  ${info.shell}  PID ${info.pid}  ${info.cols}×${info.rows}`
+          );
+        }
+        case "shell_write": {
+          const sessionName = String(args.name ?? "");
+          if (!sessionName) return fail("'name' 是必填项");
+          const data = String(args.data ?? "");
+          const encoding = (args.encoding ?? "utf8") as "utf8" | "hex";
+          shell.announceToolCall(
+            name,
+            `${sessionName} ${encoding}: ${data.length > 40 ? data.slice(0, 40) + "…" : data}`
+          );
+          const r = await shell.write(sessionName, data, encoding);
+          return text(`→ 已发送 ${r.bytes} 字节到 ${sessionName} (${encoding})`);
+        }
+        case "shell_read": {
+          const sessionName = String(args.name ?? "");
+          if (!sessionName) return fail("'name' 是必填项");
+          const maxBytes = (args.maxBytes as number | undefined) ?? 4096;
+          const clear = (args.clear as boolean | undefined) ?? true;
+          shell.announceToolCall(name, `${sessionName} maxBytes=${maxBytes} clear=${clear}`);
+          const r = shell.readBuffer(sessionName, maxBytes, clear);
+          if (r.bytes === 0) return text(`← ${sessionName} 缓冲区为空（0 字节）`);
+          const sep = "─".repeat(56);
+          return text(
+            [
+              `← ${sessionName} 接收 ${r.bytes} 字节${clear ? "（已清空缓冲区）" : ""}`,
+              sep,
+              r.utf8,
+              sep,
+              `hex: ${previewHex(r.hex)}`,
+            ].join("\n")
+          );
+        }
+        case "shell_kill": {
+          const sessionName = String(args.name ?? "");
+          if (!sessionName) return fail("'name' 是必填项");
+          shell.announceToolCall(name, sessionName);
+          await shell.kill(sessionName);
+          return text(`○ 已结束 shell 会话 ${sessionName}`);
         }
         default:
           return fail(`未知工具：${name}`);
