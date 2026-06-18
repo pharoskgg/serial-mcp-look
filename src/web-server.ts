@@ -9,7 +9,18 @@ import { shell, type SessionInfo } from "./shell-manager.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-export async function startWebServer(port: number): Promise<{ url: string }> {
+type WebServerInstance = {
+  server: http.Server;
+};
+
+type WebServerResult = {
+  url: string;
+  port: number;
+  requestedPort: number;
+  didFallback: boolean;
+};
+
+function createWebServer(): WebServerInstance {
   const app = express();
   const candidates = [
     path.resolve(__dirname, "public"),
@@ -19,8 +30,40 @@ export async function startWebServer(port: number): Promise<{ url: string }> {
   if (staticDir) app.use(express.static(staticDir));
 
   const server = http.createServer(app);
-  const wss = new WebSocketServer({ server, path: "/ws" });
 
+  return { server };
+}
+
+function listenOn(server: http.Server, port: number): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const onError = (err: NodeJS.ErrnoException) => reject(err);
+    server.once("error", onError);
+    server.listen(port, "127.0.0.1", () => {
+      server.off("error", onError);
+      const address = server.address();
+      resolve(typeof address === "object" && address ? address.port : port);
+    });
+  });
+}
+
+function isAddressInUse(err: unknown): boolean {
+  return (
+    typeof err === "object" &&
+    err !== null &&
+    "code" in err &&
+    (err as NodeJS.ErrnoException).code === "EADDRINUSE"
+  );
+}
+
+function closeFailedInstance({ server }: WebServerInstance) {
+  try {
+    server.close();
+  } catch {
+    // 忽略启动失败后的清理错误，后续会继续尝试备用端口。
+  }
+}
+
+function attachBridge(wss: WebSocketServer) {
   function broadcast(msg: unknown) {
     const data = JSON.stringify(msg);
     for (const client of wss.clients) {
@@ -137,11 +180,34 @@ export async function startWebServer(port: number): Promise<{ url: string }> {
       }
     });
   });
+}
 
-  return new Promise((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(port, "127.0.0.1", () => {
-      resolve({ url: `http://127.0.0.1:${port}` });
-    });
-  });
+export async function startWebServer(port: number): Promise<WebServerResult> {
+  let instance = createWebServer();
+
+  try {
+    const actualPort = await listenOn(instance.server, port);
+    const wss = new WebSocketServer({ server: instance.server, path: "/ws" });
+    attachBridge(wss);
+    return {
+      url: `http://127.0.0.1:${actualPort}`,
+      port: actualPort,
+      requestedPort: port,
+      didFallback: false,
+    };
+  } catch (err) {
+    closeFailedInstance(instance);
+    if (!isAddressInUse(err)) throw err;
+  }
+
+  instance = createWebServer();
+  const actualPort = await listenOn(instance.server, 0);
+  const wss = new WebSocketServer({ server: instance.server, path: "/ws" });
+  attachBridge(wss);
+  return {
+    url: `http://127.0.0.1:${actualPort}`,
+    port: actualPort,
+    requestedPort: port,
+    didFallback: true,
+  };
 }

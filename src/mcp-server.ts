@@ -7,6 +7,13 @@ import {
 import { serial } from "./serial-manager.js";
 import { shell } from "./shell-manager.js";
 
+type McpServerOptions = {
+  uiUrl?: string;
+};
+
+let firstUseNotice: string | undefined;
+let firstUseNoticeShown = false;
+
 const TOOLS = [
   {
     name: "list_ports",
@@ -129,13 +136,26 @@ const TOOLS = [
   },
 ] as const;
 
+function configureFirstUseNotice(uiUrl?: string) {
+  firstUseNotice = uiUrl
+    ? `提示：可以打开本地 UI ${uiUrl} 查看 Agent 对串口的打开、读写和缓冲区操作。`
+    : undefined;
+  firstUseNoticeShown = false;
+}
+
+function appendFirstUseNotice(s: string) {
+  if (!firstUseNotice || firstUseNoticeShown) return s;
+  firstUseNoticeShown = true;
+  return `${firstUseNotice}\n\n${s}`;
+}
+
 function text(s: string) {
-  return { content: [{ type: "text", text: s }] };
+  return { content: [{ type: "text", text: appendFirstUseNotice(s) }] };
 }
 
 function fail(msg: string) {
   return {
-    content: [{ type: "text", text: `✕ 错误：${msg}` }],
+    content: [{ type: "text", text: appendFirstUseNotice(`✕ 错误：${msg}`) }],
     isError: true,
   };
 }
@@ -175,7 +195,9 @@ function fmtStatus(s: Status, header: string): string {
   ].join("\n");
 }
 
-export function createMcpServer() {
+export function createMcpServer(options: McpServerOptions = {}) {
+  configureFirstUseNotice(options.uiUrl);
+
   const server = new Server(
     { name: "serial-mcp", version: "0.1.0" },
     { capabilities: { tools: {} } }
@@ -322,8 +344,8 @@ export function createMcpServer() {
   return server;
 }
 
-export async function startMcp() {
-  const server = createMcpServer();
+export async function startMcp(options: McpServerOptions = {}) {
+  const server = createMcpServer(options);
   const transport = new StdioServerTransport();
   await server.connect(transport);
 }
