@@ -87,7 +87,7 @@ export class SerialManager extends EventEmitter {
       await this.close();
     }
     const fullOpts = {
-      baudRate: opts.baudRate ?? 9600,
+      baudRate: opts.baudRate ?? 115200,
       dataBits: opts.dataBits ?? 8,
       stopBits: opts.stopBits ?? 1,
       parity: opts.parity ?? "none",

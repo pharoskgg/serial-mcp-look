@@ -9,7 +9,7 @@ function log(...args: unknown[]) {
 }
 
 async function main() {
-  const uiPort = parseInt(process.env.SERIAL_MCP_UI_PORT ?? "3737", 10);
+  const uiPort = parseInt(process.env.SERIAL_MCP_UI_PORT ?? "33571", 10);
 
   // Start Web UI; failure here is non-fatal — MCP must still come up.
   startWebServer(uiPort)

@@ -60,7 +60,7 @@
 | 工具 | 入参 | 输出（可读文本） |
 |---|---|---|
 | `list_ports` | — | 对齐的端口列表（path · 厂商 · PNP ID） |
-| `open_port` | `path` *(必填)*, `baudRate` (默认 9600), `dataBits` (5/6/7/8), `stopBits` (1/1.5/2), `parity` (none/even/odd/mark/space) | `✓ 已打开 COM1` + 当前状态块 |
+| `open_port` | `path` *(必填)*, `baudRate` (默认 115200), `dataBits` (5/6/7/8), `stopBits` (1/1.5/2), `parity` (none/even/odd/mark/space) | `✓ 已打开 COM1` + 当前状态块 |
 | `close_port` | — | `○ 已关闭 COM1` |
 | `write_data` | `data` *(必填)*, `encoding` (`utf8` 或 `hex`，默认 utf8) | `→ 已发送 N 字节` + 预览 |
 | `read_buffer` | `maxBytes` (默认 1024), `clear` (默认 true) | `← 接收 N 字节` + 分隔线包裹的纯文本输出 + hex 预览 |

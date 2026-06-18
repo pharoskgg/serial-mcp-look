@@ -17,7 +17,7 @@ const TOOLS = [
     name: "open_port",
     description:
       "Open a serial port. If a port is already open, it is closed first. " +
-      "Default baudRate=9600, dataBits=8, stopBits=1, parity='none'.",
+      "Default baudRate=115200, dataBits=8, stopBits=1, parity='none'.",
     inputSchema: {
       type: "object",
       properties: {
@@ -204,7 +204,7 @@ export function createMcpServer() {
         case "open_port": {
           const path = String(args.path ?? "");
           if (!path) return fail("'path' 是必填项");
-          serial.announceToolCall(name, `${path} @${args.baudRate ?? 9600}`);
+          serial.announceToolCall(name, `${path} @${args.baudRate ?? 115200}`);
           const status = await serial.open({
             path,
             baudRate: args.baudRate as number | undefined,
