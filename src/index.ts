@@ -10,24 +10,14 @@ function log(...args: unknown[]) {
 
 async function main() {
   const uiPort = parseInt(process.env.SERIAL_MCP_UI_PORT ?? "33571", 10);
-  let uiUrl: string | undefined;
 
-  // 启动 Web UI；失败不影响 MCP 主服务启动。
-  try {
-    const ui = await startWebServer(uiPort);
-    uiUrl = ui.url;
-    if (ui.didFallback) {
-      log(`Serial MCP UI: ${ui.url} (preferred port ${ui.requestedPort} was busy)`);
-    } else {
-      log(`Serial MCP UI: ${ui.url}`);
-    }
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    log(`UI failed to start on ${uiPort}: ${message}`);
-  }
+  // Start Web UI; failure here is non-fatal — MCP must still come up.
+  startWebServer(uiPort)
+    .then(({ url }) => log(`Serial MCP UI: ${url}`))
+    .catch((err) => log(`UI failed to start on ${uiPort}: ${err.message}`));
 
-  // 启动 MCP stdio 服务（阻塞，用于保持进程存活）。
-  await startMcp({ uiUrl });
+  // Start MCP stdio server (blocking — keeps the process alive).
+  await startMcp();
   log("MCP stdio transport connected");
 }
 
