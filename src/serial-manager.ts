@@ -180,13 +180,42 @@ export class SerialManager extends EventEmitter {
       encoding === "hex"
         ? Buffer.from(data.replace(/\s+/g, ""), "hex")
         : Buffer.from(data, "utf8");
-    await new Promise<void>((resolve, reject) => {
-      this.port!.write(buf, (err) => (err ? reject(err) : resolve()));
-    });
-    await new Promise<void>((resolve, reject) => {
-      this.port!.drain((err) => (err ? reject(err) : resolve()));
-    });
-    this.txBytes += buf.length;
+
+    // 分块写入，绕过某些串口驱动单次写入的字节数限制
+    // CHUNK=8 已验证可绕过 COM1 的 8 字节截断；块间延时需 ≥10ms 确保设备 FIFO 不溢出
+    const CHUNK = 8;
+    const CHUNK_DELAY = 10;
+    process.stderr.write(
+      `[serial] TX  ${buf.length}B  utf8:${JSON.stringify(buf.toString("utf8"))}  hex:${bufToHex(buf)}\n`
+    );
+
+    let written = 0;
+    while (written < buf.length) {
+      const chunk = buf.subarray(written, written + CHUNK);
+      await new Promise<void>((resolve, reject) => {
+        this.port!.write(chunk, (err) => (err ? reject(err) : resolve()));
+      });
+      await new Promise<void>((resolve, reject) => {
+        this.port!.drain((err) => (err ? reject(err) : resolve()));
+      });
+      written += chunk.length;
+      if (buf.length > CHUNK) {
+        process.stderr.write(
+          `[serial] TX  分片 ${written}/${buf.length}B\n`
+        );
+      }
+      // 块间延时让设备端有喘息，避免 FIFO 溢出
+      if (written < buf.length) {
+        await new Promise((r) => setTimeout(r, CHUNK_DELAY));
+      }
+    }
+
+    this.txBytes += written;
+
+    process.stderr.write(
+      `[serial] TX  完成 ${written}B  txTotal:${this.txBytes}\n`
+    );
+
     const frame: Frame = {
       ts: Date.now(),
       dir: "tx",
